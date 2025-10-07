@@ -1,12 +1,21 @@
 from time import sleep
+from spade import agent
 import traci
 import os
 import sys
+from dotenv import load_dotenv
 
-from agents.MonitoringAgent import MonitoringAgent
+from src.agents.MonitoringAgent import MonitoringAgent
 import asyncio
 
+load_dotenv()
+
+agent_name = os.getenv("AGENT_NAME")
+agent_password = os.getenv("AGENT_PASSWORD")
+
 async def main():
+
+
     # --- Path Setup for Robustness ---
     # 1. Get the directory of the current script (e.g., /ProjectRoot/src)
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,7 +48,7 @@ async def main():
 
 
     # Criar agente
-    monitor_agent = MonitoringAgent("admin@localhost", "123") # dados do agente
+    monitor_agent = MonitoringAgent(str(agent_name), str(agent_password)) # dados do agente
     await monitor_agent.start()
 
     # Simulation loop
