@@ -1,15 +1,77 @@
+import asyncio
 import spade
 import time
+import os
+from pathlib import Path
 import traci  # TraCI is the Traffic Control Interface for SUMO
 
 # --- Configuration ---
-SUMO_CMD = ["sumo-gui", "-c", "map.sumocfg"]  # Replace with your SUMO configuration file
+# Default SUMO command template. The actual config path will be resolved
+# at runtime by `find_sumo_config()` so the project can be run from the
+# repository root or other working directories.
+SUMO_CMD = ["sumo-gui", "-c", "map.sumocfg"]  # fallback, replaced at runtime
 PORT = 8888  # TraCI port (default)
 TRAFFIC_LIGHT_ID = "10893856743"  # Replace with the actual ID of the traffic light in your .net.xml file
 AGENT_JID = "admin@localhost"
 AGENT_PASSWORD = "password"
 
+# Possible locations (relative to repository root or current working dir) to
+# search for the SUMO config file. Extend if your project keeps the file
+# elsewhere.
+SUMO_CONFIG_CANDIDATES = [
+    "map.sumocfg",
+    os.path.join("sumo_environment", "map.sumocfg"),
+    os.path.join("..", "sumo_environment", "map.sumocfg"),
+]
+
+
+def find_sumo_config() -> str | None:
+    """Return absolute path to the first existing SUMO config file we find.
+
+    Searches candidate locations and returns None if not found.
+    """
+    # Try candidates first
+    for candidate in SUMO_CONFIG_CANDIDATES:
+        p = Path(candidate)
+        if p.is_file():
+            return str(p.resolve())
+
+    # As a last resort, attempt to search the repository for .sumocfg files.
+    try:
+        # Search current working directory recursively (limited depth implicitly)
+        cwd = Path(os.getcwd())
+        for p in cwd.rglob("*.sumocfg"):
+            return str(p.resolve())
+    except Exception:
+        pass
+
+    return None
+
 # --- Traffic Light Control Logic ---
+
+def jid_localpart(jid_obj):
+    """Safely return the local part/user of a JID.
+
+    Works if jid_obj is a string (e.g. 'user@domain') or a slixmpp.jid.JID
+    instance (has attribute 'user'). Falls back to str(jid_obj) if needed.
+    """
+    try:
+        # slixmpp.jid.JID exposes .user for the local part
+        if hasattr(jid_obj, "user") and jid_obj.user:
+            return jid_obj.user
+    except Exception:
+        pass
+
+    # If it's a string like 'user@domain', split it
+    try:
+        if isinstance(jid_obj, str) and "@" in jid_obj:
+            return jid_obj.split("@", 1)[0]
+    except Exception:
+        pass
+
+    # Fallback
+    return str(jid_obj)
+
 
 def get_traffic_demand(junction_id):
     """
@@ -19,7 +81,7 @@ def get_traffic_demand(junction_id):
     total_vehicles = 0
     # You would typically define the incoming lanes for the junction here
     # Example Lane IDs (REPLACE WITH YOUR ACTUAL LANE IDs)
-    incoming_lanes = ["265390429#1_0"]
+    incoming_lanes = ["265390429#1_0", "59525257#0", "1032038604#0"]
 
     try:
         for lane_id in incoming_lanes:
@@ -78,9 +140,10 @@ class TrafficLightAgent(spade.agent.Agent):
     # A Behaviour that periodically checks traffic and updates the light
     class ControlBehaviour(spade.behaviour.CyclicBehaviour):
         async def run(self):
-            print(f"--- Agent {self.agent.jid.localpart} checking traffic... ---")
+            print(f"--- Agent {jid_localpart(self.agent.jid)} checking traffic... ---")
             
             try:
+                print("A")
                 # 1. Get current traffic light state
                 current_phase_index = traci.trafficlight.getPhase(TRAFFIC_LIGHT_ID)
                 current_phase_string = traci.trafficlight.getPhaseString(TRAFFIC_LIGHT_ID)
@@ -115,27 +178,40 @@ class TrafficLightAgent(spade.agent.Agent):
             await self.agent.sleep(5) # Check every 5 seconds
             
     async def setup(self):
-        print(f"Traffic Light Agent {self.jid.localpart} starting...")
-        
+        print(f"Traffic Light Agent {jid_localpart(self.jid)} starting...")
+
         # Start the SUMO simulation and connect TraCI
         # IMPORTANT: Run SUMO in the background (as a separate process)
         print("Starting SUMO and connecting TraCI...")
+
+        config_path = find_sumo_config()
+        if not config_path:
+            print("Could not find a SUMO configuration file (map.sumocfg)."
+                  " Look in the repository root or the sumo_environment/ folder.")
+            return
+
+        # Build the command using the discovered absolute config path
+        cmd = ["sumo-gui", "-c", config_path]
+
+        # Try starting SUMO, but be explicit about errors and don't crash the whole agent
         try:
-            # This line starts SUMO and connects TraCI
-            traci.start(SUMO_CMD, port=PORT, label=self.jid.localpart) 
+            traci.start(cmd, port=PORT, label=jid_localpart(self.jid))
             print("TraCI connection established.")
         except Exception as e:
             print(f"Failed to start SUMO/connect TraCI. Ensure SUMO is installed and configured: {e}")
             return # Exit setup if TraCI connection fails
 
+        print("AA") # erro aqui
+
         # Add the ControlBehaviour to the agent
         b = self.ControlBehaviour()
         self.add_behaviour(b)
 
+        print("AAA")
+
 # --- Main Execution ---
 
-if __name__ == "__main__":
-    
+async def main():
     # The SPADE platform must be running (e.g., as a separate process or in another terminal)
     # The agent will connect to the platform specified in AGENT_JID (e.g., '@localhost')
 
@@ -143,10 +219,11 @@ if __name__ == "__main__":
         AGENT_JID, 
         AGENT_PASSWORD
     )
-    future = tl_agent.start()
+    await tl_agent.start()
+    #future = tl_agent.start()
     
     # Wait until the agent has connected and is running
-    future.result() 
+    #future.result() 
 
     # Keep the main thread alive so the agent can run its behaviours
     while tl_agent.is_alive():
@@ -167,3 +244,6 @@ if __name__ == "__main__":
     if 'traci' in globals() and traci.isEmbedded():
         traci.close()
     tl_agent.stop()
+
+if __name__ == "__main__":
+    asyncio.run(main())
