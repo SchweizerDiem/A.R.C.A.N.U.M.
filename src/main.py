@@ -17,7 +17,7 @@ async def main():
     agent_name = os.getenv("AGENT_NAME")
     agent_password = os.getenv("AGENT_PASSWORD")
 
-    tl_name = os.getenv("TL_AGENT")
+    tl_name = os.getenv("TL_NAME")
     tl_password = os.getenv("TL_PASSWORD")
 
     ic_name = os.getenv("IC_NAME")
