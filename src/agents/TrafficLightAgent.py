@@ -11,7 +11,7 @@ import traci  # TraCI is the Traffic Control Interface for SUMO
 # repository root or other working directories.
 SUMO_CMD = ["sumo-gui", "-c", "map.sumocfg"]  # fallback, replaced at runtime
 PORT = 8888  # TraCI port (default)
-TRAFFIC_LIGHT_ID = "10893856743"  # Replace with the actual ID of the traffic light in your .net.xml file
+TRAFFIC_LIGHT_ID = None  # If None the agent will control all traffic lights found in the network
 AGENT_JID = "admin@localhost"
 AGENT_PASSWORD = "password"
 
@@ -76,22 +76,43 @@ def jid_localpart(jid_obj):
 def get_traffic_demand(junction_id):
     """
     Checks the current traffic volume on the incoming lanes of the junction.
-    This is a placeholder for a more complex traffic sensing logic.
+    Uses TraCI to retrieve the controlled lanes for the given traffic light
+    and sums the number of vehicles currently on those lanes.
     """
     total_vehicles = 0
-    # You would typically define the incoming lanes for the junction here
-    # Example Lane IDs (REPLACE WITH YOUR ACTUAL LANE IDs)
-    incoming_lanes = ["265390429#1_0", "59525257#0", "1032038604#0"]
 
     try:
-        for lane_id in incoming_lanes:
-            # Get the number of vehicles on the lane
-            total_vehicles += traci.lane.getLastStepVehicleNumber(lane_id)
+        # Get lanes controlled by this traffic light
+        print(f"Querying controlled lanes for TL {junction_id}...")
+        lanes = traci.trafficlight.getControlledLanes(junction_id)
+        if not lanes:
+            # Fallback: try getControlledLinks -> extract lane ids
+            links = traci.trafficlight.getControlledLinks(junction_id)
+            lanes = []
+            for link_group in links:
+                for link in link_group:
+                    if len(link) >= 3:
+                        # link format: [incomingLaneId, outgoingLaneId, ...]
+                        lanes.append(link[0])
+
+        # Remove duplicates
+        lanes = list(dict.fromkeys(lanes))
+
+        print(f"TL {junction_id} controls lanes: {lanes}")
+        for lane_id in lanes:
+            try:
+                n = traci.lane.getLastStepVehicleNumber(lane_id)
+                print(f"  Lane {lane_id}: {n} vehicles")
+                total_vehicles += n
+            except Exception as e:
+                # Ignore missing/temporary lanes but print reason
+                print(f"  Warning: couldn't read lane {lane_id}: {e}")
+                continue
+
     except Exception as e:
-        # Handle cases where the lane ID might not exist yet
-        print(f"TraCI Error during traffic check: {e}")
+        print(f"TraCI Error during traffic check for {junction_id}: {e}")
         return 0
-        
+
     return total_vehicles
 
 def determine_next_phase(junction_id, current_phase_index, traffic_demand):
@@ -109,8 +130,9 @@ def determine_next_phase(junction_id, current_phase_index, traffic_demand):
     # Simple threshold logic
     TRAFFIC_THRESHOLD = 5
     
+    print(f"Deciding next phase for TL {junction_id}: current={current_phase_index}, demand={traffic_demand}, threshold={TRAFFIC_THRESHOLD}")
     if traffic_demand < TRAFFIC_THRESHOLD:
-        print(f"Low traffic ({traffic_demand}), considering phase switch.")
+        print(f"  Low traffic ({traffic_demand} < {TRAFFIC_THRESHOLD}), considering phase switch.")
         
         # Determine the next phase based on the current one
         # Assuming a four-phase system: Green1 -> Yellow1 -> Green2 -> Yellow2
@@ -127,8 +149,10 @@ def determine_next_phase(junction_id, current_phase_index, traffic_demand):
     
     # For simplicity in this example, we'll implement the full cycle transition:
     if current_phase_index == 1: # N-S Yellow, go to E-W Green
+        print("  Current is N-S Yellow -> switching to E-W Green (2)")
         return 2
     elif current_phase_index == 3: # E-W Yellow, go to N-S Green
+        print("  Current is E-W Yellow -> switching to N-S Green (0)")
         return 0
         
     return current_phase_index # Keep the current phase if no condition is met
@@ -145,27 +169,36 @@ class TrafficLightAgent(spade.agent.Agent):
             try:
                 print("A")
                 # 1. Get current traffic light state
-                current_phase_index = traci.trafficlight.getPhase(TRAFFIC_LIGHT_ID)
-                current_phase_string = traci.trafficlight.getPhaseString(TRAFFIC_LIGHT_ID)
-                print(f"Current Phase: Index {current_phase_index} ({current_phase_string})")
-                
-                # 2. Sense the environment (get traffic demand)
-                traffic_demand = get_traffic_demand(TRAFFIC_LIGHT_ID)
-                print(f"Detected Traffic Demand on incoming lanes: {traffic_demand} vehicles.")
-                
-                # 3. Decide on the next action (determine next phase)
-                next_phase_index = determine_next_phase(
-                    TRAFFIC_LIGHT_ID, 
-                    current_phase_index, 
-                    traffic_demand
-                )
-                
-                # 4. Act on the environment (change the traffic light phase)
-                if next_phase_index != current_phase_index:
-                    traci.trafficlight.setPhase(TRAFFIC_LIGHT_ID, next_phase_index)
-                    print(f"Traffic Light switched from index {current_phase_index} to index {next_phase_index}")
-                else:
-                    print(f"Traffic Light phase remains index {current_phase_index}")
+                # Control one or all traffic lights depending on configuration
+                tl_ids = [TRAFFIC_LIGHT_ID] if TRAFFIC_LIGHT_ID else traci.trafficlight.getIDList()
+                print(f"Discovered traffic lights to control: {tl_ids}")
+
+                for tl in tl_ids:
+                    current_phase_index = traci.trafficlight.getPhase(tl)
+                    try:
+                        current_phase_string = traci.trafficlight.getPhaseString(tl)
+                    except Exception:
+                        current_phase_string = ""
+
+                    print(f"TL {tl} - Current Phase: Index {current_phase_index} ({current_phase_string})")
+
+                    # Sense the environment (get traffic demand)
+                    traffic_demand = get_traffic_demand(tl)
+                    print(f"TL {tl} - Detected Traffic Demand on incoming lanes: {traffic_demand} vehicles.")
+
+                    # Decide on the next action (determine next phase)
+                    next_phase_index = determine_next_phase(
+                        tl,
+                        current_phase_index,
+                        traffic_demand
+                    )
+
+                    # Act on the environment (change the traffic light phase)
+                    if next_phase_index != current_phase_index:
+                        traci.trafficlight.setPhase(tl, next_phase_index)
+                        print(f"TL {tl} switched from index {current_phase_index} to index {next_phase_index}")
+                    else:
+                        print(f"TL {tl} phase remains index {current_phase_index}")
                     
             except traci.exceptions.FatalTraCIError as e:
                 print(f"FATAL TraCI Error: SUMO may not be running or the connection was lost: {e}")
@@ -183,7 +216,6 @@ class TrafficLightAgent(spade.agent.Agent):
         # Start the SUMO simulation and connect TraCI
         # IMPORTANT: Run SUMO in the background (as a separate process)
         print("Starting SUMO and connecting TraCI...")
-
         config_path = find_sumo_config()
         if not config_path:
             print("Could not find a SUMO configuration file (map.sumocfg)."
@@ -192,6 +224,8 @@ class TrafficLightAgent(spade.agent.Agent):
 
         # Build the command using the discovered absolute config path
         cmd = ["sumo-gui", "-c", config_path]
+        print(f"Using SUMO config: {config_path}")
+        print(f"Starting SUMO with command: {cmd}")
 
         # Try starting SUMO, but be explicit about errors and don't crash the whole agent
         try:
@@ -201,7 +235,13 @@ class TrafficLightAgent(spade.agent.Agent):
             print(f"Failed to start SUMO/connect TraCI. Ensure SUMO is installed and configured: {e}")
             return # Exit setup if TraCI connection fails
 
-        print("AA") # erro aqui
+        print("AA") # debug marker
+        # After TraCI started, list traffic lights found
+        try:
+            tl_list = traci.trafficlight.getIDList()
+            print(f"Traffic lights found in network: {tl_list}")
+        except Exception:
+            print("Warning: could not list traffic lights after TraCI start")
 
         # Add the ControlBehaviour to the agent
         b = self.ControlBehaviour()
@@ -226,12 +266,53 @@ async def main():
     #future.result() 
 
     # Keep the main thread alive so the agent can run its behaviours
+    # Keep the main thread alive so the agent can run its behaviours
+    step = 0
     while tl_agent.is_alive():
         try:
             time.sleep(1)
             # Advance the SUMO simulation step by step
             traci.simulationStep()
-            
+            step += 1
+
+            # Print traffic light info for this step
+            try:
+                tl_ids = traci.trafficlight.getIDList()
+                print(f"\nSUMO step {step} - Traffic Light status:")
+                for tl in tl_ids:
+                    try:
+                        phase = traci.trafficlight.getPhase(tl)
+                        rgy = traci.trafficlight.getRedYellowGreenState(tl)
+                    except Exception:
+                        phase = None
+                        rgy = ""
+
+                    # Controlled lanes and vehicle counts
+                    try:
+                        lanes = traci.trafficlight.getControlledLanes(tl)
+                        # fallback to links if lanes empty
+                        if not lanes:
+                            links = traci.trafficlight.getControlledLinks(tl)
+                            lanes = []
+                            for link_group in links:
+                                for link in link_group:
+                                    if len(link) >= 3:
+                                        lanes.append(link[0])
+                        lanes = list(dict.fromkeys(lanes))
+                        veh_count = 0
+                        for lane in lanes:
+                            try:
+                                veh_count += traci.lane.getLastStepVehicleNumber(lane)
+                            except Exception:
+                                continue
+                    except Exception:
+                        lanes = []
+                        veh_count = 0
+
+                    print(f"  TL {tl}: phase={phase} state={rgy} lanes={lanes} vehicles={veh_count}")
+            except Exception as e:
+                print(f"  Warning: couldn't read traffic light list/status: {e}")
+
         except KeyboardInterrupt:
             print("\nShutting down agents and SUMO...")
             break
