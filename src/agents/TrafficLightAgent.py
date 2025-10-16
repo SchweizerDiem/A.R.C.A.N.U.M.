@@ -6,10 +6,21 @@ Feature 2: Traffic Light Agent (com SUMO + SPADE)
 Este agente controla um conjunto de semáforos numa interseção do SUMO.
 Ele observa as filas através do TraCI e ajusta o tempo do verde dinamicamente.
 
-Fluxo:
- - A cada ciclo (period=2s), o agente lê o número de veículos por lane.
- - Se a fila for grande, mantém o verde por mais tempo.
- - Caso contrário, muda para amarelo e depois vermelho.
+Algoritmo (melhoria):
+ - A cada ciclo (period=2s) o agente coleta por-lane o número de veículos e tempo de espera.
+ - Calcula uma "demanda" por fase: demanda = vehicles + 0.2 * waiting_time.
+ - Prioriza a fase com maior demanda; se outra fase tiver demanda significativamente maior
+     (fator configurável) e o tempo mínimo na fase atual já passou, inicia a transição.
+ - Mantém limites mínimo e máximo para o tempo de verde por fase (min_green / max_green).
+
+Parâmetros tunáveis:
+ - green_time_duration: tempo alvo atual de verde (inicial 10s)
+ - min_green / max_green: limites para o verde (5s / 20s)
+ - yellow_time / red_time: tempos fixos de segurança (4s cada)
+ - demand_threshold_factor: quanto maior a demanda da melhor fase em relação à atual para forçar troca (default 1.25)
+
+Essa abordagem busca reduzir o tempo de espera médio priorizando direções com filas maiores,
+preservando segurança com tempos mínimos e fases de transição.
 
 Autor: (tu)
 """
@@ -50,26 +61,56 @@ class TrafficLightAgent(agent.Agent):
             print(f"[{self.agent.name}] Tempo na Fase {current_phase}: {time_on_phase:.1f}s")
 
 
-            # 1. Lógica para as Fases VERDE (Green)
-            if "g" in phases[current_phase].state or "G" in phases[current_phase].state: # se verde atual
+            # === Per-phase demand scoring ===
+            # Para cada fase, somamos os veículos e o tempo de espera das lanes que têm verde nessa fase.
+            phase_demands = []
+            controlled_lanes = lanes
+            for i, phase in enumerate(phases):
+                demand_veh = 0
+                demand_wait = 0
+                # A string phase.state tem um char por lane na mesma ordem de controlled_lanes
+                for lane_idx, lane_id in enumerate(controlled_lanes):
+                    if lane_idx < len(phase.state) and phase.state[lane_idx] in ("g", "G"):
+                        try:
+                            v = traci.lane.getLastStepVehicleNumber(lane_id)
+                            w = traci.lane.getWaitingTime(lane_id)
+                        except Exception:
+                            v, w = 0, 0
+                        demand_veh += v
+                        demand_wait += w
+                # Score combina número de veículos com espera, ponderando espera menos que contagem
+                score = demand_veh + 0.2 * (demand_wait)
+                phase_demands.append(score)
 
-                # Lógica Adaptativa: Ajustar o tempo que esta fase VAI durar
-                # Se houver muitos carros aumenta o tempo, senão diminui
+            # Escolhe a fase com maior demanda (prioridade)
+            best_phase = max(range(len(phases)), key=lambda i: phase_demands[i]) if phases else current_phase
+            current_phase_demand = phase_demands[current_phase] if phases else 0
+            best_phase_demand = phase_demands[best_phase] if phases else 0
+
+            print(f"[{self.agent.name}] Demanda por fase: {[round(x,1) for x in phase_demands]}")
+
+            # 1. Lógica para as Fases VERDE (Green)
+            if "g" in phases[current_phase].state or "G" in phases[current_phase].state:  # se verde atual
+
+                # Lógica Adaptativa: ajusta o tempo alvo de verde com base no tráfego total
                 if total_vehicles > 10 and self.agent.green_time_duration < self.agent.max_green:
-                    self.agent.green_time_duration += 2
-                    # Nota: O tempo é ajustado para *a próxima* fase verde ou para prolongar a atual
+                    self.agent.green_time_duration = min(self.agent.max_green, self.agent.green_time_duration + 2)
                     print(f"[{self.agent.name}] Estendendo verde para {self.agent.green_time_duration}s")
                 elif total_vehicles < 3 and self.agent.green_time_duration > self.agent.min_green:
-                    self.agent.green_time_duration -= 1
+                    self.agent.green_time_duration = max(self.agent.min_green, self.agent.green_time_duration - 1)
                     print(f"[{self.agent.name}] Reduzindo verde para {self.agent.green_time_duration}s")
 
-                # Decisão de MUDAR: Se atingiu o tempo mínimo E há poucos carros, OU se atingiu o tempo máximo.
-                if (time_on_phase >= self.agent.min_green and total_vehicles < 5) or \
-                   (time_on_phase >= self.agent.green_time_duration):
-                    next_phase = current_phase + 1
+                # Decide se inicia a transição para a próxima fase:
+                # - Se passou o tempo mínimo E outra fase tem demanda significativamente maior
+                # - Ou se atingiu o tempo máximo planejado para esta fase
+                demand_threshold_factor = 1.25
+                if ((time_on_phase >= self.agent.min_green and best_phase != current_phase and best_phase_demand > current_phase_demand * demand_threshold_factor)
+                        or (time_on_phase >= self.agent.green_time_duration)):
+                    # Inicia a transição (normalmente a fase seguinte é o amarelo)
+                    next_phase = (current_phase + 1) % len(phases)
                     traci.trafficlight.setPhase(tls_id, next_phase)
-                    self.agent.current_phase_start_time = current_time # Reset do timer
-                    print(f"[{self.agent.name}] MUDANÇA: Verde -> Amarelo. Próximo verde: {self.agent.green_time_duration}s")
+                    self.agent.current_phase_start_time = current_time  # Reset do timer
+                    print(f"[{self.agent.name}] MUDANÇA: Verde -> Amarelo. Próximo verde alvo: {self.agent.green_time_duration}s")
 
             # 2. Lógica para as Fases AMARELO (Yellow)
             elif "y" in phases[current_phase].state or "Y" in phases[current_phase].state: # se amarelo atual
