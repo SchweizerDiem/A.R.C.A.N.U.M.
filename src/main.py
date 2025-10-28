@@ -58,7 +58,7 @@ async def main():
     print("monitor iniciado")
     tls_agent = TrafficLightAgent(str(tl_name), str(tl_password))
     print("tls iniciado")
-    tls_agent.tls_id = "J11"  # ID do semáforo no SUMO (ajusta conforme o teu .net.xml)
+    tls_agent.tls_id = "J5"  # ID do semáforo no SUMO (ajusta conforme o teu .net.xml)
     car_agent = CarInfoAgent(str(ic_name), str(ic_password))
     print("car iniciado")
 
