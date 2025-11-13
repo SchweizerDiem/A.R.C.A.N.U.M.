@@ -28,9 +28,33 @@ Autor: (tu)
 from spade import agent, behaviour
 import traci
 import asyncio
+from spade.message import Message
 
 
 class TrafficLightAgent(agent.Agent):
+    def __init__(self, jid, password, tls_id, monitor_jid):
+        super().__init__(jid, password)
+        self.tls_id = tls_id
+        self.monitor_jid = monitor_jid
+
+    class ReportStatusBehaviour(behaviour.PeriodicBehaviour):
+        async def run(self):
+            """Envia um relatório de estado para o agente de monitorização."""
+            if not traci.isLoaded():
+                return
+
+            try:
+                current_phase = traci.trafficlight.getPhase(self.agent.tls_id)
+                time_on_phase = traci.simulation.getTime() - self.agent.current_phase_start_time
+                status_msg = f"Phase: {current_phase}, Time on phase: {time_on_phase:.1f}s"
+
+                msg = Message(to=self.agent.monitor_jid)
+                msg.set_metadata("performative", "inform")
+                msg.body = status_msg
+                await self.send(msg)
+            except Exception as e:
+                print(f"[{self.agent.name}] Error sending report: {e}")
+
     class ControlBehaviour(behaviour.PeriodicBehaviour):
         async def run(self):
 
@@ -55,10 +79,10 @@ class TrafficLightAgent(agent.Agent):
                 if lanes else 0
             )
 
-            print(f"[{self.agent.name}] Veículos: {total_vehicles}, Espera média: {avg_waiting:.2f}s")
+            #print(f"[{self.agent.name}] Veículos: {total_vehicles}, Espera média: {avg_waiting:.2f}s")
 
             time_on_phase = current_time - self.agent.current_phase_start_time
-            print(f"[{self.agent.name}] Tempo na Fase {current_phase}: {time_on_phase:.1f}s")
+            #print(f"[{self.agent.name}] Tempo na Fase {current_phase}: {time_on_phase:.1f}s")
 
 
             # === Per-phase demand scoring ===
@@ -87,7 +111,7 @@ class TrafficLightAgent(agent.Agent):
             current_phase_demand = phase_demands[current_phase] if phases else 0
             best_phase_demand = phase_demands[best_phase] if phases else 0
 
-            print(f"[{self.agent.name}] Demanda por fase: {[round(x,1) for x in phase_demands]}")
+            #print(f"[{self.agent.name}] Demanda por fase: {[round(x,1) for x in phase_demands]}")
 
             # 1. Lógica para as Fases VERDE (Green)
             if "g" in phases[current_phase].state or "G" in phases[current_phase].state:  # se verde atual
@@ -95,10 +119,10 @@ class TrafficLightAgent(agent.Agent):
                 # Lógica Adaptativa: ajusta o tempo alvo de verde com base no tráfego total
                 if total_vehicles > 10 and self.agent.green_time_duration < self.agent.max_green:
                     self.agent.green_time_duration = min(self.agent.max_green, self.agent.green_time_duration + 2)
-                    print(f"[{self.agent.name}] Estendendo verde para {self.agent.green_time_duration}s")
+                    #print(f"[{self.agent.name}] Estendendo verde para {self.agent.green_time_duration}s")
                 elif total_vehicles < 3 and self.agent.green_time_duration > self.agent.min_green:
                     self.agent.green_time_duration = max(self.agent.min_green, self.agent.green_time_duration - 1)
-                    print(f"[{self.agent.name}] Reduzindo verde para {self.agent.green_time_duration}s")
+                    #print(f"[{self.agent.name}] Reduzindo verde para {self.agent.green_time_duration}s")
 
                 # Decide se inicia a transição para a próxima fase:
                 # - Se passou o tempo mínimo E outra fase tem demanda significativamente maior
@@ -110,7 +134,7 @@ class TrafficLightAgent(agent.Agent):
                     next_phase = (current_phase + 1) % len(phases)
                     traci.trafficlight.setPhase(tls_id, next_phase)
                     self.agent.current_phase_start_time = current_time  # Reset do timer
-                    print(f"[{self.agent.name}] MUDANÇA: Verde -> Amarelo. Próximo verde alvo: {self.agent.green_time_duration}s")
+                    #print(f"[{self.agent.name}] MUDANÇA: Verde -> Amarelo. Próximo verde alvo: {self.agent.green_time_duration}s")
 
             # 2. Lógica para as Fases AMARELO (Yellow)
             elif "y" in phases[current_phase].state or "Y" in phases[current_phase].state: # se amarelo atual
@@ -121,20 +145,20 @@ class TrafficLightAgent(agent.Agent):
                     next_phase = (current_phase + 1) % len(phases)
                     traci.trafficlight.setPhase(tls_id, next_phase)
                     self.agent.current_phase_start_time = current_time # Reset do timer
-                    print(f"[{self.agent.name}] MUDANÇA: Amarelo -> Próximo. Nova fase: {next_phase}")
+                    #print(f"[{self.agent.name}] MUDANÇA: Amarelo -> Próximo. Nova fase: {next_phase}")
 
-            # 3. Lógica para as Fases de TRANSIÇÃO/VERMELHO 
+            # 3. Lógica para as Fases de TRANSIÇÃO/VERMELHO
             else:
                 # Usa um tempo fixo (pode ser o mesmo que o amarelo)
-                transition_time = self.agent.red_time 
-                
+                transition_time = self.agent.red_time
+
                 if time_on_phase >= transition_time:
-                    
+
                     # Próxima fase (deve ser o próximo verde)
                     next_phase = (current_phase + 1) % len(phases)
                     traci.trafficlight.setPhase(tls_id, next_phase)
                     self.agent.current_phase_start_time = current_time # Reset do timer
-                    print(f"[{self.agent.name}] MUDANÇA: Transição/Vermelho -> Próximo. Nova fase: {next_phase}")
+                    #print(f"[{self.agent.name}] MUDANÇA: Transição/Vermelho -> Próximo. Nova fase: {next_phase}")
 
             '''
             # Lógica adaptativa simples
@@ -160,8 +184,13 @@ class TrafficLightAgent(agent.Agent):
         """Inicialização do agente SPADE"""
         print(f"[{self.jid}] Agente de Semáforo iniciado (controlando {self.tls_id})")
 
-        b = self.ControlBehaviour(period=2)
-        self.add_behaviour(b)
+        # Adiciona o comportamento de controlo principal
+        control_behaviour = self.ControlBehaviour(period=2)
+        self.add_behaviour(control_behaviour)
+
+        # Adiciona o comportamento de envio de relatórios
+        report_behaviour = self.ReportStatusBehaviour(period=10) # Envia relatório a cada 10s
+        self.add_behaviour(report_behaviour)
 
         # Parâmetros de comportamento
         self.green_time_duration = 10 # Tempo de verde decidido para o ciclo atual
@@ -179,3 +208,4 @@ class TrafficLightAgent(agent.Agent):
         except traci.exceptions.TraCIException:
              # Se o SUMO ainda não estiver ligado, o valor 0.0 é ok
              pass
+

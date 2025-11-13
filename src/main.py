@@ -56,10 +56,12 @@ async def main():
     # Criar agentes
     monitor_agent = MonitoringAgent(str(agent_name), str(agent_password))
     print("monitor iniciado")
-    tls_agent = TrafficLightAgent(str(tl_name), str(tl_password))
+
+    tls_id = "J5"  # ID do semáforo no SUMO
+    tls_agent = TrafficLightAgent(str(tl_name), str(tl_password), tls_id, str(agent_name))
     print("tls iniciado")
-    tls_agent.tls_id = "J5"  # ID do semáforo no SUMO (ajusta conforme o teu .net.xml)
-    car_agent = CarInfoAgent(str(ic_name), str(ic_password))
+
+    car_agent = CarInfoAgent(str(ic_name), str(ic_password), str(agent_name))
     print("car iniciado")
 
 

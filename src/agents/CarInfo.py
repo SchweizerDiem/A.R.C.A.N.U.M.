@@ -1,20 +1,31 @@
 import traci
 from spade import agent, behaviour
+from spade.message import Message
 
 
 class CarInfoAgent(agent.Agent):
-    """Agente leve para observação de veículos e rerouting reativo.
+    def __init__(self, jid, password, monitor_jid):
+        super().__init__(jid, password)
+        self.monitor_jid = monitor_jid
+        self.rerouted_vehicles = set()
 
-    Comportamentos:
-    - CarInfoBehaviour: imprime estado dos carros (debug)
-    - RerouteBehaviour: verifica, a cada N segundos, se um carro está muito atrasado
-      comparado ao tempo ideal restante e tenta rerotar usando `simulation.findRoute`.
+    class ReportStatusBehaviour(behaviour.PeriodicBehaviour):
+        async def run(self):
+            """Envia um relatório de estado para o agente de monitorização."""
+            if not traci.isLoaded():
+                return
 
-    Parâmetros importantes (definidos em `setup`):
-    - reroute_check_period: segundos entre checagens de reroute
-    - reroute_threshold_factor: se remaining_time > ideal_time * factor => tenta reroute
-    - max_allowed_delay: se remaining_time - ideal_time > this => tenta reroute
-    """
+            try:
+                active_cars = traci.vehicle.getIDCount()
+                rerouted_count = len(self.agent.rerouted_vehicles)
+                status_msg = f"Tracking: {active_cars} cars, Rerouted: {rerouted_count} cars"
+
+                msg = Message(to=self.agent.monitor_jid)
+                msg.set_metadata("performative", "inform")
+                msg.body = status_msg
+                await self.send(msg)
+            except Exception as e:
+                print(f"[{self.agent.name}] Error sending report: {e}")
 
     class CarInfoBehaviour(behaviour.PeriodicBehaviour):
         async def run(self):
@@ -25,17 +36,17 @@ class CarInfoAgent(agent.Agent):
             car_ids = traci.vehicle.getIDList()
 
             if not car_ids:
-                print(f"[Car Info] Step {step}: Nenhum carro ativo.")
+                #print(f"[Car Info] Step {step}: Nenhum carro ativo.")
                 return
 
-            print(f"\n[Car Info] Step {step}")
+            #print(f"\n[Car Info] Step {step}")
             for cid in car_ids:
                 try:
                     pos = traci.vehicle.getPosition(cid)
                     speed = traci.vehicle.getSpeed(cid)
                     route = traci.vehicle.getRoute(cid)
                     lane = traci.vehicle.getLaneID(cid)
-                    print(f"  → ID: {cid}, Pos: {pos}, Velocidade: {speed:.2f} m/s, Faixa: {lane}, Rota: {route}")
+                    #print(f"  → ID: {cid}, Pos: {pos}, Velocidade: {speed:.2f} m/s, Faixa: {lane}, Rota: {route}")
                 except Exception as e:
                     print(f"[Car Info] Erro lendo info do veículo {cid}: {e}")
 
@@ -114,7 +125,8 @@ class CarInfoAgent(agent.Agent):
                         if new_edges and len(new_edges) > 0 and new_edges != remaining_edges:
                             try:
                                 traci.vehicle.setRoute(cid, new_edges)
-                                print(f"[Reroute] Vehicle {cid}: rerouted at edge {current_edge}. Old remaining: {remaining_edges} New: {new_edges}")
+                                self.agent.rerouted_vehicles.add(cid)
+                                #print(f"[Reroute] Vehicle {cid}: rerouted at edge {current_edge}. Old remaining: {remaining_edges} New: {new_edges}")
                             except Exception as e:
                                 print(f"[Reroute] Vehicle {cid}: failed to set new route: {e}")
 
@@ -134,3 +146,7 @@ class CarInfoAgent(agent.Agent):
 
         reroute_behaviour = self.RerouteBehaviour(period=self.reroute_check_period)
         self.add_behaviour(reroute_behaviour)
+
+        # Adiciona o comportamento de envio de relatórios
+        report_behaviour = self.ReportStatusBehaviour(period=12) # Envia relatório a cada 12s
+        self.add_behaviour(report_behaviour)
