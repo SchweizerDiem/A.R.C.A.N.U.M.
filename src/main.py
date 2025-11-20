@@ -62,7 +62,7 @@ async def main():
 
     # 5. Connect to SUMO simulation using the absolute path
     # Use 'sumo-gui' instead of 'sumo' initially for visual debugging
-    traci.start(["sumo-gui", "-c", CONFIG_FILE])
+    traci.start(["sumo-gui", "-c", CONFIG_FILE, "--max-num-vehicles",str(20)])
 
     # Criar agentes
     monitor_agent = MonitoringAgent(str(agent_name), str(agent_password))
