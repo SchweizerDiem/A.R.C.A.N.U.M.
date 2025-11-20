@@ -17,11 +17,22 @@ async def main():
     agent_name = os.getenv("AGENT_NAME")
     agent_password = os.getenv("AGENT_PASSWORD")
 
-    tl_name = os.getenv("TL_NAME")
-    tl_password = os.getenv("TL_PASSWORD")
+    # Load traffic light agent credentials
+    tl_agents_credentials = []
+    for i in range(1, 7):  # 6 traffic light agents
+        tl_name = os.getenv(f"TL_NAME_{i}")
+        tl_password = os.getenv(f"TL_PASSWORD_{i}")
+        if tl_name and tl_password:
+            tl_agents_credentials.append((tl_name, tl_password))
 
-    ic_name = os.getenv("IC_NAME")
-    ic_password = os.getenv("IC_PASSWORD")
+    # Load car agent credentials
+    car_agents_credentials = []
+    for i in range(1, 21):  # 20 car agents
+        car_name = os.getenv(f"CAR_NAME_{i}")
+        car_password = os.getenv(f"CAR_PASSWORD_{i}")
+        if car_name and car_password:
+            car_agents_credentials.append((car_name, car_password))
+
     # --- Path Setup for Robustness ---
     # 1. Get the directory of the current script (e.g., /ProjectRoot/src)
 
@@ -57,18 +68,30 @@ async def main():
     monitor_agent = MonitoringAgent(str(agent_name), str(agent_password))
     print("monitor iniciado")
 
-    tls_id = "J5"  # ID do semáforo no SUMO
-    tls_agent = TrafficLightAgent(str(tl_name), str(tl_password), tls_id, str(agent_name))
-    print("tls iniciado")
+    # Create traffic light agents
+    tls_agents = []
+    tls_ids = ["J1", "J2", "J5", "J6", "J9", "J10"]  # SUMO traffic light IDs
+    for i, (tl_name, tl_password) in enumerate(tl_agents_credentials):
+        tls_id = tls_ids[i] if i < len(tls_ids) else f"J{i+1}"
+        tls_agent = TrafficLightAgent(str(tl_name), str(tl_password), tls_id, str(agent_name))
+        tls_agents.append(tls_agent)
+    print(f"tls iniciado: {len(tls_agents)} agents")
 
-    car_agent = CarInfoAgent(str(ic_name), str(ic_password), str(agent_name))
-    print("car iniciado")
-
+    # Create car agents
+    car_agents = []
+    for car_name, car_password in car_agents_credentials:
+        car_agent = CarInfoAgent(str(car_name), str(car_password), str(agent_name))
+        car_agents.append(car_agent)
+    print(f"car iniciado: {len(car_agents)} agents")
 
     # Criar agente
     await monitor_agent.start()
-    await tls_agent.start()
-    await car_agent.start()
+    
+    for tls_agent in tls_agents:
+        await tls_agent.start()
+    
+    for car_agent in car_agents:
+        await car_agent.start()
 
     # Simulation loop
     for _ in range(1000):
@@ -77,11 +100,16 @@ async def main():
 
     # --- Encerrar ---
     await monitor_agent.stop()
-    print("Agente encerrado.")
+    print("Monitor agent encerrado.")
 
-    # Close TraCI connection
-    await tls_agent.stop()
-    await car_agent.stop()
+    for tls_agent in tls_agents:
+        await tls_agent.stop()
+    print(f"{len(tls_agents)} TL agents encerrados.")
+    
+    for car_agent in car_agents:
+        await car_agent.stop()
+    print(f"{len(car_agents)} Car agents encerrados.")
+    
     traci.close()
 
 if __name__ == "__main__":
