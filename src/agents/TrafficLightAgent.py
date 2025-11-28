@@ -28,6 +28,7 @@ Autor: (tu)
 from spade import agent, behaviour
 import traci
 import asyncio
+import warnings
 from spade.message import Message
 
 
@@ -68,7 +69,9 @@ class TrafficLightAgent(agent.Agent):
 
             # Obtém estado atual do semáforo no SUMO
             current_phase = traci.trafficlight.getPhase(tls_id)
-            logic = traci.trafficlight.getCompleteRedYellowGreenDefinition(tls_id)[0]
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                logic = traci.trafficlight.getCompleteRedYellowGreenDefinition(tls_id)[0]
             phases = logic.getPhases()
 
             # Contar veículos nas lanes controladas
