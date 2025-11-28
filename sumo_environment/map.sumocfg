@@ -7,7 +7,7 @@
 
     <input>
         <net-file value="network.net.xml"/>
-        <route-files value="routes.rou.xml"/>
+        <route-files value="trips.trips.xml"/>
     </input>
 
     <time>
