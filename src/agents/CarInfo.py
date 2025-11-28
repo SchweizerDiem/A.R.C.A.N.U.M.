@@ -1,13 +1,18 @@
 import traci
 from spade import agent, behaviour
 from spade.message import Message
-
+import threading
 
 class CarInfoAgent(agent.Agent):
+    # Shared resource to track which vehicles are already claimed by an agent
+    claimed_vehicles = set()
+    claim_lock = threading.Lock()
+
     def __init__(self, jid, password, monitor_jid):
         super().__init__(jid, password)
         self.monitor_jid = monitor_jid
         self.rerouted_vehicles = set()
+        self.vehicle_id = None  # The specific vehicle this agent is controlling
 
     class ReportStatusBehaviour(behaviour.PeriodicBehaviour):
         async def run(self):
@@ -16,9 +21,9 @@ class CarInfoAgent(agent.Agent):
                 return
 
             try:
-                active_cars = traci.vehicle.getIDCount()
-                rerouted_count = len(self.agent.rerouted_vehicles)
-                status_msg = f"Tracking: {active_cars} cars, Rerouted: {rerouted_count} cars"
+                status_msg = f"Status: {'Idle' if self.agent.vehicle_id is None else f'Controlling {self.agent.vehicle_id}'}"
+                if self.agent.vehicle_id:
+                     status_msg += f", Rerouted: {'Yes' if self.agent.vehicle_id in self.agent.rerouted_vehicles else 'No'}"
 
                 msg = Message(to=self.agent.monitor_jid)
                 msg.set_metadata("performative", "inform")
@@ -32,111 +37,134 @@ class CarInfoAgent(agent.Agent):
             if not traci.isLoaded():
                 return
 
-            step = traci.simulation.getTime()
-            car_ids = traci.vehicle.getIDList()
+            # If we don't have a vehicle, try to claim one
+            if self.agent.vehicle_id is None:
+                car_ids = traci.vehicle.getIDList()
+                with CarInfoAgent.claim_lock:
+                    for cid in car_ids:
+                        if cid not in CarInfoAgent.claimed_vehicles:
+                            self.agent.vehicle_id = cid
+                            CarInfoAgent.claimed_vehicles.add(cid)
+                            print(f"[{self.agent.name}] Claimed vehicle {cid}")
+                            break
+                
+                # If still no vehicle, just return and wait for next tick
+                if self.agent.vehicle_id is None:
+                    return
 
-            if not car_ids:
-                #print(f"[Car Info] Step {step}: Nenhum carro ativo.")
+            # If we have a vehicle, check if it still exists
+            if self.agent.vehicle_id not in traci.vehicle.getIDList():
+                print(f"[{self.agent.name}] Vehicle {self.agent.vehicle_id} finished/disappeared. Releasing.")
+                with CarInfoAgent.claim_lock:
+                    if self.agent.vehicle_id in CarInfoAgent.claimed_vehicles:
+                        CarInfoAgent.claimed_vehicles.remove(self.agent.vehicle_id)
+                self.agent.vehicle_id = None
                 return
 
-            #print(f"\n[Car Info] Step {step}")
-            for cid in car_ids:
-                try:
-                    pos = traci.vehicle.getPosition(cid)
-                    speed = traci.vehicle.getSpeed(cid)
-                    route = traci.vehicle.getRoute(cid)
-                    lane = traci.vehicle.getLaneID(cid)
-                    #print(f"  → ID: {cid}, Pos: {pos}, Velocidade: {speed:.2f} m/s, Faixa: {lane}, Rota: {route}")
-                except Exception as e:
-                    print(f"[Car Info] Erro lendo info do veículo {cid}: {e}")
+            # Monitor the specific vehicle
+            cid = self.agent.vehicle_id
+            try:
+                pos = traci.vehicle.getPosition(cid)
+                speed = traci.vehicle.getSpeed(cid)
+                route = traci.vehicle.getRoute(cid)
+                lane = traci.vehicle.getLaneID(cid)
+                # print(f"[{self.agent.name}] Monitoring {cid} -> Pos: {pos}, Speed: {speed:.2f}, Lane: {lane}")
+            except Exception as e:
+                print(f"[{self.agent.name}] Error reading info for {cid}: {e}")
 
     class RerouteBehaviour(behaviour.PeriodicBehaviour):
         async def run(self):
             # Reroute only when TraCI is available
             if not traci.isLoaded():
                 return
+            
+            # Only act if we control a vehicle
+            cid = self.agent.vehicle_id
+            if cid is None:
+                return
 
-            # iterate vehicles and decide if reroute is beneficial
-            car_ids = traci.vehicle.getIDList()
-            for cid in car_ids:
+            try:
+                # Check if vehicle still exists (double check to avoid race conditions)
+                if cid not in traci.vehicle.getIDList():
+                    return
+
+                route = traci.vehicle.getRoute(cid)
+                if not route:
+                    return
+
+                # destination is last edge in route
+                dest_edge = route[-1]
+
+                # current edge/road
+                current_edge = traci.vehicle.getRoadID(cid)
+
+                # if vehicle already at destination edge, skip
+                if current_edge == dest_edge or current_edge == "":
+                    return
+
+                # find where we are in the route
                 try:
-                    route = traci.vehicle.getRoute(cid)
-                    if not route:
-                        continue
+                    # route_index: first occurrence of current_edge in route
+                    route_index = route.index(current_edge)
+                except ValueError:
+                    # current edge not in original planned route; set index 0
+                    route_index = 0
 
-                    # destination is last edge in route
-                    dest_edge = route[-1]
+                remaining_edges = route[route_index:]
 
-                    # current edge/road
-                    current_edge = traci.vehicle.getRoadID(cid)
-
-                    # if vehicle already at destination edge, skip
-                    if current_edge == dest_edge or current_edge == "":
-                        continue
-
-                    # find where we are in the route
+                # estimate remaining travel time using current traveltime estimates
+                remaining_time = 0.0
+                ideal_time = 0.0
+                for edge in remaining_edges:
                     try:
-                        # route_index: first occurrence of current_edge in route
-                        route_index = route.index(current_edge)
-                    except ValueError:
-                        # current edge not in original planned route; set index 0
-                        route_index = 0
-
-                    remaining_edges = route[route_index:]
-
-                    # estimate remaining travel time using current traveltime estimates
-                    remaining_time = 0.0
-                    ideal_time = 0.0
-                    for edge in remaining_edges:
+                        remaining_time += float(traci.edge.getTraveltime(edge))
+                    except Exception:
+                        # if getTraveltime unavailable, fall back to length / maxSpeed
                         try:
-                            remaining_time += float(traci.edge.getTraveltime(edge))
+                            remaining_time += float(traci.edge.getLength(edge)) / max(0.1, float(traci.edge.getMaxSpeed(edge)))
                         except Exception:
-                            # if getTraveltime unavailable, fall back to length / maxSpeed
-                            try:
-                                remaining_time += float(traci.edge.getLength(edge)) / max(0.1, float(traci.edge.getMaxSpeed(edge)))
-                            except Exception:
-                                remaining_time += 0.0
+                            remaining_time += 0.0
 
+                    try:
+                        ideal_time += float(traci.edge.getLength(edge)) / max(0.1, float(traci.edge.getMaxSpeed(edge)))
+                    except Exception:
+                        ideal_time += 0.0
+
+                # decide if reroute
+                factor = self.agent.reroute_threshold_factor
+                max_delay = self.agent.max_allowed_delay
+
+                # if remaining_time is much larger than ideal OR absolute delay large
+                if (ideal_time > 0 and remaining_time > ideal_time * factor) or (remaining_time - ideal_time > max_delay):
+                    # compute alternative route from current_edge to dest
+                    try:
+                        new_route = traci.simulation.findRoute(current_edge, dest_edge)
+                        # new_route may be a FindRouteResult with .edges attribute
+                        if hasattr(new_route, 'edges'):
+                            new_edges = new_route.edges
+                        elif isinstance(new_route, (list, tuple)):
+                            new_edges = list(new_route)
+                        else:
+                            # try to coerce
+                            new_edges = list(getattr(new_route, 'route', []) or [])
+                    except Exception as e:
+                        new_edges = None
+
+                    if new_edges and len(new_edges) > 0 and new_edges != remaining_edges:
                         try:
-                            ideal_time += float(traci.edge.getLength(edge)) / max(0.1, float(traci.edge.getMaxSpeed(edge)))
-                        except Exception:
-                            ideal_time += 0.0
-
-                    # decide if reroute
-                    factor = self.agent.reroute_threshold_factor
-                    max_delay = self.agent.max_allowed_delay
-
-                    # if remaining_time is much larger than ideal OR absolute delay large
-                    if (ideal_time > 0 and remaining_time > ideal_time * factor) or (remaining_time - ideal_time > max_delay):
-                        # compute alternative route from current_edge to dest
-                        try:
-                            new_route = traci.simulation.findRoute(current_edge, dest_edge)
-                            # new_route may be a FindRouteResult with .edges attribute
-                            if hasattr(new_route, 'edges'):
-                                new_edges = new_route.edges
-                            elif isinstance(new_route, (list, tuple)):
-                                new_edges = list(new_route)
-                            else:
-                                # try to coerce
-                                new_edges = list(getattr(new_route, 'route', []) or [])
+                            traci.vehicle.setRoute(cid, new_edges)
+                            self.agent.rerouted_vehicles.add(cid)
+                            print(f"[{self.agent.name}] Rerouted vehicle {cid}")
                         except Exception as e:
-                            new_edges = None
+                            print(f"[{self.agent.name}] Failed to set new route for {cid}: {e}")
 
-                        if new_edges and len(new_edges) > 0 and new_edges != remaining_edges:
-                            try:
-                                traci.vehicle.setRoute(cid, new_edges)
-                                self.agent.rerouted_vehicles.add(cid)
-                                #print(f"[Reroute] Vehicle {cid}: rerouted at edge {current_edge}. Old remaining: {remaining_edges} New: {new_edges}")
-                            except Exception as e:
-                                print(f"[Reroute] Vehicle {cid}: failed to set new route: {e}")
-
-                except Exception as e:
-                    # protect behaviour from crashing on unexpected traci errors
-                    print(f"[Reroute] Error checking vehicle {cid}: {e}")
+            except Exception as e:
+                # protect behaviour from crashing on unexpected traci errors
+                print(f"[{self.agent.name}] Error checking reroute for {cid}: {e}")
 
     async def setup(self):
         print(f"[{self.jid}] Agente de Informação de Carros iniciado")
-        car_behaviour = self.CarInfoBehaviour(period=2)  # executa a cada 2s
+        car_behaviour = self.CarInfoBehaviour(period=1)  # Check more frequently to claim vehicles fast
         self.add_behaviour(car_behaviour)
 
         # Reroute behaviour params
