@@ -3,6 +3,7 @@ from spade import agent
 from agents.TrafficLightAgent import TrafficLightAgent
 from agents.MonitoringAgent import MonitoringAgent
 from agents.CarInfo import CarInfoAgent
+from agents.DisruptionAgent import DisruptionAgent
 import asyncio
 import traci
 import os
@@ -33,6 +34,10 @@ async def main():
         if car_name and car_password:
             car_agents_credentials.append((car_name, car_password))
 
+    # Load disruption agent credentials
+    disruption_name = os.getenv("DISRUPTION_NAME")
+    disruption_password = os.getenv("DISRUPTION_PASSWORD")
+
     # --- Path Setup for Robustness ---
     # 1. Get the directory of the current script (e.g., /ProjectRoot/src)
 
@@ -62,11 +67,16 @@ async def main():
 
     # 5. Connect to SUMO simulation using the absolute path
     # Use 'sumo-gui' instead of 'sumo' initially for visual debugging
-    traci.start(["sumo-gui", "-c", CONFIG_FILE, "--max-num-vehicles",str(20)])
+    # Add --ignore-route-errors para impedeir que o SUMO crash quando uma rota é fechada
+    traci.start(["sumo-gui", "-c", CONFIG_FILE, "--max-num-vehicles", str(20), "--ignore-route-errors"])
 
     # Criar agentes
     monitor_agent = MonitoringAgent(str(agent_name), str(agent_password))
     print("monitor iniciado")
+
+    # Criar agente de interrupção
+    disruption_agent = DisruptionAgent(disruption_name, disruption_password)
+    print("Disruption agent iniciado")
 
     # Create traffic light agents
     tls_agents = []
@@ -86,6 +96,8 @@ async def main():
 
     # Criar agente
     await monitor_agent.start()
+
+    await disruption_agent.start()
     
     for tls_agent in tls_agents:
         await tls_agent.start()
@@ -101,6 +113,9 @@ async def main():
     # --- Encerrar ---
     await monitor_agent.stop()
     print("Monitor agent encerrado.")
+    
+    await disruption_agent.stop()
+    print("Disruption agent encerrado.")
 
     for tls_agent in tls_agents:
         await tls_agent.stop()

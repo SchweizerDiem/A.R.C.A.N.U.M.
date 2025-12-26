@@ -115,7 +115,29 @@ class CarInfoAgent(agent.Agent):
                 # estimate remaining travel time using current traveltime estimates
                 remaining_time = 0.0
                 ideal_time = 0.0
+                
+                path_blocked = False
+
                 for edge in remaining_edges:
+                    # Check for road closures/disallowed permissions
+                    try:
+                        # traci.edge.getDisallowed does not exist. Must check lanes.
+                        # If all lanes are closed to passenger, the edge is blocked.
+                        path_blocked_edge = True
+                        lane_count = traci.edge.getLaneNumber(edge)
+                        for i in range(lane_count):
+                            lane_id = f"{edge}_{i}"
+                            disallowed = traci.lane.getDisallowed(lane_id)
+                            if "passenger" not in disallowed:
+                                path_blocked_edge = False
+                                break
+                        
+                        if path_blocked_edge:
+                            path_blocked = True
+                            remaining_time += 1e6 # Add huge penalty
+                    except Exception:
+                        pass
+                        
                     try:
                         remaining_time += float(traci.edge.getTraveltime(edge))
                     except Exception:
@@ -134,11 +156,12 @@ class CarInfoAgent(agent.Agent):
                 factor = self.agent.reroute_threshold_factor
                 max_delay = self.agent.max_allowed_delay
 
-                # if remaining_time is much larger than ideal OR absolute delay large
-                if (ideal_time > 0 and remaining_time > ideal_time * factor) or (remaining_time - ideal_time > max_delay):
+                # if remaining_time is much larger than ideal OR absolute delay large OR path blocked
+                if (ideal_time > 0 and remaining_time > ideal_time * factor) or (remaining_time - ideal_time > max_delay) or path_blocked:
                     # compute alternative route from current_edge to dest
                     try:
-                        new_route = traci.simulation.findRoute(current_edge, dest_edge)
+                        v_type = traci.vehicle.getTypeID(cid)
+                        new_route = traci.simulation.findRoute(current_edge, dest_edge, vType=v_type)
                         # new_route may be a FindRouteResult with .edges attribute
                         if hasattr(new_route, 'edges'):
                             new_edges = new_route.edges
@@ -154,7 +177,7 @@ class CarInfoAgent(agent.Agent):
                         try:
                             traci.vehicle.setRoute(cid, new_edges)
                             self.agent.rerouted_vehicles.add(cid)
-                            print(f"[{self.agent.name}] Rerouted vehicle {cid}")
+                            print(f"[{self.agent.name}] Rerouted vehicle {cid} (Path valid/better? {not path_blocked})")
                         except Exception as e:
                             print(f"[{self.agent.name}] Failed to set new route for {cid}: {e}")
 
