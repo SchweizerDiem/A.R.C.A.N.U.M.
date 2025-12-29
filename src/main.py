@@ -8,6 +8,8 @@ import asyncio
 import traci
 import os
 import sys
+import tkinter as tk
+from gui import TrafficControlPanel
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -70,6 +72,13 @@ async def main():
     # Add --ignore-route-errors para impedeir que o SUMO crash quando uma rota é fechada
     traci.start(["sumo-gui", "-c", CONFIG_FILE, "--max-num-vehicles", str(20), "--ignore-route-errors"])
 
+    # --- Inicializar GUI ---
+    root = tk.Tk()
+    # Usar traci para obter as traffic lights não é ideal aqui pois os agentes ainda não estão criados
+    # Vamos passar os agentes depois de criados
+    panel = None 
+
+
     # Criar agentes
     monitor_agent = MonitoringAgent(str(agent_name), str(agent_password))
     print("monitor iniciado")
@@ -94,6 +103,10 @@ async def main():
         car_agents.append(car_agent)
     print(f"car iniciado: {len(car_agents)} agents")
 
+    # Inicializar painel com os agentes criados
+    panel = TrafficControlPanel(root, disruption_agent, tls_agents)
+
+
     # Criar agente
     await monitor_agent.start()
 
@@ -105,8 +118,16 @@ async def main():
     for car_agent in car_agents:
         await car_agent.start()
 
+    panel.enable_controls()
+
+
     # Simulation loop
     for _ in range(1000):
+        try:
+             panel.update()
+        except tk.TclError:
+             print("Painel fechado.")
+             break
         traci.simulationStep()
         await asyncio.sleep(1)
 

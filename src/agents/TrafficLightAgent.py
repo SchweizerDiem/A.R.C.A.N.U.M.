@@ -209,6 +209,18 @@ class TrafficLightAgent(agent.Agent):
         try:
              self.current_phase_start_time = traci.simulation.getTime()
         except traci.exceptions.TraCIException:
-             # Se o SUMO ainda não estiver ligado, o valor 0.0 é ok
              pass
+
+    def set_manual_phase(self, phase_index):
+        """força manualmente uma fase"""
+        if not traci.isLoaded():
+            print(f"[{self.jid}] Cannot set phase: SUMO not loaded")
+            return
+            
+        try:
+            traci.trafficlight.setPhase(self.tls_id, phase_index)
+            self.current_phase_start_time = traci.simulation.getTime()
+            print(f"[{self.tls_id}] Manually set to phase {phase_index}")
+        except Exception as e:
+            print(f"[{self.tls_id}] Error setting manual phase: {e}")
 
