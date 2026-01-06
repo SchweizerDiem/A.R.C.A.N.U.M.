@@ -194,25 +194,40 @@ class TrafficLightAgent(agent.Agent):
                             lane_id = traci.vehicle.getLaneID(veh_id)
                             tls_id = self.agent.tls_id
                             
-                            controlled_lanes = traci.trafficlight.getControlledLanes(tls_id)
-                            current_phase = traci.trafficlight.getPhase(tls_id)
+                            # Correctly map lane to signal indices using getControlledLinks
+                            links = traci.trafficlight.getControlledLinks(tls_id)
+                            # links is a list of lists: indices correspond to phase.state characters
                             
-                            lane_index = -1
-                            if lane_id in controlled_lanes:
-                                lane_index = controlled_lanes.index(lane_id)
+                            target_indices = []
+                            for i, link_list in enumerate(links):
+                                # check connections commanded by signal i
+                                for connection in link_list:
+                                    # connection is (incoming_lane, outgoing_lane, via_lane)
+                                    # we check if incoming_lane matches our ambulance lane
+                                    if connection[0] == lane_id:
+                                        target_indices.append(i)
+                                        break # found a match for this signal index
                             
-                            if lane_index != -1:
+                            if target_indices:
                                 with warnings.catch_warnings():
                                     warnings.simplefilter("ignore")
                                     logic = traci.trafficlight.getCompleteRedYellowGreenDefinition(tls_id)[0]
                                 phases = logic.getPhases()
                                 
                                 best_phase = -1
-                                for i, phase in enumerate(phases):
-                                    if len(phase.state) > lane_index and phase.state[lane_index] in ('G', 'g'):
-                                        best_phase = i
+                                for p_idx, phase in enumerate(phases):
+                                    # Find first phase where our lane has Green
+                                    is_green = False
+                                    for t_idx in target_indices:
+                                        if len(phase.state) > t_idx and phase.state[t_idx] in ('G', 'g'):
+                                            is_green = True
+                                            break
+                                    
+                                    if is_green:
+                                        best_phase = p_idx
                                         break
                                 
+                                current_phase = traci.trafficlight.getPhase(tls_id)
                                 if best_phase != -1 and best_phase != current_phase:
                                     traci.trafficlight.setPhase(tls_id, best_phase)
                                     self.agent.current_phase_start_time = traci.simulation.getTime()

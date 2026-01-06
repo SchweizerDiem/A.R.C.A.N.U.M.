@@ -74,6 +74,39 @@ class CarInfoAgent(agent.Agent):
                 route = traci.vehicle.getRoute(cid)
                 lane = traci.vehicle.getLaneID(cid)
                 # print(f"[{self.agent.name}] Monitoring {cid} -> Pos: {pos}, Speed: {speed:.2f}, Lane: {lane}")
+
+                # Check if next edge is final and closed
+                try:
+                    current_idx = traci.vehicle.getRouteIndex(cid)
+                    if current_idx >= 0 and current_idx + 1 < len(route):
+                        next_edge = route[current_idx + 1]
+                        # If next edge is the last one in the route
+                        if next_edge == route[-1]:
+                            # Check if closed
+                            is_closed = True
+                            try:
+                                lane_count = traci.edge.getLaneNumber(next_edge)
+                                for i in range(lane_count):
+                                    lane_id = f"{next_edge}_{i}"
+                                    disallowed = traci.lane.getDisallowed(lane_id)
+                                    if "passenger" not in disallowed:
+                                        is_closed = False
+                                        break
+                            except Exception:
+                                is_closed = False # Assume open if error checking edge
+                            
+                            if is_closed:
+                                print(f"[{self.agent.name}] Vehicle {cid} approaching final edge {next_edge} which is closed. Despawning as arrived.")
+                                traci.vehicle.remove(cid, reason=3) # 3 = REMOVE_ARRIVED
+                                with CarInfoAgent.claim_lock:
+                                    if self.agent.vehicle_id in CarInfoAgent.claimed_vehicles:
+                                        CarInfoAgent.claimed_vehicles.remove(self.agent.vehicle_id)
+                                self.agent.vehicle_id = None
+                                return
+
+                except Exception as e:
+                    print(f"[{self.agent.name}] Error checking final road for {cid}: {e}")
+
             except Exception as e:
                 print(f"[{self.agent.name}] Error reading info for {cid}: {e}")
 
