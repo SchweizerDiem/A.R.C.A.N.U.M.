@@ -3,7 +3,9 @@ from spade import agent
 from agents.TrafficLightAgent import TrafficLightAgent
 from agents.MonitoringAgent import MonitoringAgent
 from agents.CarInfo import CarInfoAgent
+
 from agents.DisruptionAgent import DisruptionAgent
+from agents.AmbulanceManagerAgent import AmbulanceManagerAgent
 import asyncio
 import traci
 import os
@@ -30,11 +32,16 @@ async def main():
 
     # Load car agent credentials
     car_agents_credentials = []
-    for i in range(1, 21):  # 20 car agents
+    # Use 19 car agents, save the 20th for Ambulance Manager
+    for i in range(1, 20):  
         car_name = os.getenv(f"CAR_NAME_{i}")
         car_password = os.getenv(f"CAR_PASSWORD_{i}")
         if car_name and car_password:
             car_agents_credentials.append((car_name, car_password))
+    
+    # Credentials for Ambulance Manager (using CAR 20)
+    amb_name = os.getenv("AMBULANCE_NAME")
+    amb_password = os.getenv("AMBULANCE_PASSWORD")
 
     # Load disruption agent credentials
     disruption_name = os.getenv("DISRUPTION_NAME")
@@ -103,6 +110,17 @@ async def main():
         car_agents.append(car_agent)
     print(f"car iniciado: {len(car_agents)} agents")
 
+    # Create mapping of tls_id to jid for AmbulanceManager
+    tls_mapping = {agent.tls_id: str(agent.jid) for agent in tls_agents}
+    
+    # Create Ambulance Manager
+    if amb_name and amb_password:
+        ambulance_agent = AmbulanceManagerAgent(str(amb_name), str(amb_password), tls_mapping)
+        print("Ambulance Manager iniciado")
+    else:
+        ambulance_agent = None
+        print("Warning: Credentials for Ambulance Manager not found (CAR_NAME_20)")
+
     # Inicializar painel com os agentes criados
     panel = TrafficControlPanel(root, disruption_agent, tls_agents)
 
@@ -117,6 +135,9 @@ async def main():
     
     for car_agent in car_agents:
         await car_agent.start()
+
+    if ambulance_agent:
+        await ambulance_agent.start()
 
     panel.enable_controls()
 
@@ -145,6 +166,10 @@ async def main():
     for car_agent in car_agents:
         await car_agent.stop()
     print(f"{len(car_agents)} Car agents encerrados.")
+
+    if ambulance_agent:
+        await ambulance_agent.stop()
+        print("Ambulance Manager encerrado.")
     
     traci.close()
 

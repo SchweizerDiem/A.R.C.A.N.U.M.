@@ -8,6 +8,7 @@
     <input>
         <net-file value="network.net.xml"/>
         <route-files value="trips.trips.xml"/>
+        <additional-files value="ambulance.add.xml"/>
     </input>
 
     <time>

@@ -180,8 +180,45 @@ class TrafficLightAgent(agent.Agent):
                 print(f"[{self.agent.name}] Mudança de fase para {next_phase}")
             '''
 
-        async def on_end(self):
             print(f"[{self.agent.name}] Finalizando comportamento.")
+
+    class ListenPriorityBehaviour(behaviour.CyclicBehaviour):
+        async def run(self):
+            msg = await self.receive(timeout=0.1)
+            if msg and msg.body and "priority_request" in msg.body:
+                try:
+                    content = msg.body
+                    if ":" in content:
+                        veh_id = content.split(":")[1]
+                        if str(veh_id) in traci.vehicle.getIDList():
+                            lane_id = traci.vehicle.getLaneID(veh_id)
+                            tls_id = self.agent.tls_id
+                            
+                            controlled_lanes = traci.trafficlight.getControlledLanes(tls_id)
+                            current_phase = traci.trafficlight.getPhase(tls_id)
+                            
+                            lane_index = -1
+                            if lane_id in controlled_lanes:
+                                lane_index = controlled_lanes.index(lane_id)
+                            
+                            if lane_index != -1:
+                                with warnings.catch_warnings():
+                                    warnings.simplefilter("ignore")
+                                    logic = traci.trafficlight.getCompleteRedYellowGreenDefinition(tls_id)[0]
+                                phases = logic.getPhases()
+                                
+                                best_phase = -1
+                                for i, phase in enumerate(phases):
+                                    if len(phase.state) > lane_index and phase.state[lane_index] in ('G', 'g'):
+                                        best_phase = i
+                                        break
+                                
+                                if best_phase != -1 and best_phase != current_phase:
+                                    traci.trafficlight.setPhase(tls_id, best_phase)
+                                    self.agent.current_phase_start_time = traci.simulation.getTime()
+                                    print(f"[{self.agent.name}] PRIORITY: Ambulancia {veh_id}. MUDANCA DE FASE IMEDIATA -> {best_phase}")
+                except Exception as e:
+                    print(f"[{self.agent.name}] Error handling priority: {e}")
 
     async def setup(self):
         """Inicialização do agente SPADE"""
@@ -194,6 +231,10 @@ class TrafficLightAgent(agent.Agent):
         # Adiciona o comportamento de envio de relatórios
         report_behaviour = self.ReportStatusBehaviour(period=10) # Envia relatório a cada 10s
         self.add_behaviour(report_behaviour)
+
+        # Adiciona o comportamento de prioridade
+        priority_behaviour = self.ListenPriorityBehaviour()
+        self.add_behaviour(priority_behaviour)
 
         # Parâmetros de comportamento
         self.green_time_duration = 10 # Tempo de verde decidido para o ciclo atual

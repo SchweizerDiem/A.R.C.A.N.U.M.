@@ -43,6 +43,11 @@ class CarInfoAgent(agent.Agent):
                 with CarInfoAgent.claim_lock:
                     for cid in car_ids:
                         if cid not in CarInfoAgent.claimed_vehicles:
+                            try:
+                                if traci.vehicle.getTypeID(cid) == "ambulance":
+                                    continue
+                            except Exception:
+                                pass
                             self.agent.vehicle_id = cid
                             CarInfoAgent.claimed_vehicles.add(cid)
                             print(f"[{self.agent.name}] Claimed vehicle {cid}")
