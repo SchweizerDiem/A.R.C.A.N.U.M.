@@ -1,12 +1,23 @@
 import traci
 from spade import agent, behaviour
 from spade.message import Message
+from spade.message import Message
 import threading
+import sys
+import os
+
+# Ensure we can find the util
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
+from src.utils.RouteFinder import RouteFinder
 
 class CarInfoAgent(agent.Agent):
     # Shared resource to track which vehicles are already claimed by an agent
     claimed_vehicles = set()
     claim_lock = threading.Lock()
+    
+    # Shared RouteFinder instance (Singleton)
+    route_finder = None
+    route_finder_lock = threading.Lock()
 
     def __init__(self, jid, password, monitor_jid):
         super().__init__(jid, password)
@@ -198,17 +209,28 @@ class CarInfoAgent(agent.Agent):
                 if (ideal_time > 0 and remaining_time > ideal_time * factor) or (remaining_time - ideal_time > max_delay) or path_blocked:
                     # compute alternative route from current_edge to dest
                     try:
-                        v_type = traci.vehicle.getTypeID(cid)
-                        new_route = traci.simulation.findRoute(current_edge, dest_edge, vType=v_type)
-                        # new_route may be a FindRouteResult with .edges attribute
-                        if hasattr(new_route, 'edges'):
-                            new_edges = new_route.edges
-                        elif isinstance(new_route, (list, tuple)):
-                            new_edges = list(new_route)
-                        else:
-                            # try to coerce
-                            new_edges = list(getattr(new_route, 'route', []) or [])
+                        # Use custom RouteFinder instead of traci.simulation.findRoute
+                        # Initialize if needed (double-checked locking pattern)
+                        if CarInfoAgent.route_finder is None:
+                            with CarInfoAgent.route_finder_lock:
+                                if CarInfoAgent.route_finder is None:
+                                    # Assuming path is relative to repo root, or we can use absolute path
+                                    # Adjust this path if necessary to match runtime CWD
+                                    net_file = "sumo_environment/network.net.xml"
+                                    if not os.path.exists(net_file):
+                                        # If running from src/ or agents/, try stepping back
+                                        net_file = "../sumo_environment/network.net.xml" 
+                                        if not os.path.exists(net_file):
+                                             net_file = "../../sumo_environment/network.net.xml"
+                                    
+                                    print(f"[{self.agent.name}] Initializing shared RouteFinder with {net_file}...")
+                                    CarInfoAgent.route_finder = RouteFinder(net_file)
+
+                        print(f"[{self.agent.name}] Custom RouteFinder calculating route...")
+                        new_edges = CarInfoAgent.route_finder.find_route(current_edge, dest_edge)
+                        
                     except Exception as e:
+                        print(f"[{self.agent.name}] RouteFinder error: {e}")
                         new_edges = None
 
                     if new_edges and len(new_edges) > 0 and new_edges != remaining_edges:
