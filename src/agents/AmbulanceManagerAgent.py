@@ -5,9 +5,9 @@ import random
 import time
 
 class AmbulanceManagerAgent(agent.Agent):
-    def __init__(self, jid, password, tls_mapping):
+    def __init__(self, jid, password, monitor_jid):
         super().__init__(jid, password)
-        self.tls_mapping = tls_mapping # {tls_id: jid}
+        self.monitor_jid = monitor_jid
         self.active_ambulances = {} # {veh_id: spawn_time}
         self.ambulance_counter = 0
 
@@ -71,12 +71,12 @@ class AmbulanceManagerAgent(agent.Agent):
                         if next_tls:
                             tls_id, tls_index, dist, state = next_tls[0]
                             if dist < 150: 
-                                tls_jid = self.agent.tls_mapping.get(tls_id)
-                                if tls_jid:
-                                    msg = Message(to=tls_jid)
-                                    msg.set_metadata("performative", "request")
-                                    msg.body = f"priority_request:{veh_id}"
-                                    await self.send(msg)
+                                # Send request to Monitor instead of direct TLS
+                                msg = Message(to=self.agent.monitor_jid)
+                                msg.set_metadata("performative", "request")
+                                # Format: priority_request:{veh_id}:{target_tls_id}
+                                msg.body = f"priority_request:{veh_id}:{tls_id}"
+                                await self.send(msg)
                     except Exception as e:
                         print(f"[{self.agent.name}] Error monitoring {veh_id}: {e}")
 

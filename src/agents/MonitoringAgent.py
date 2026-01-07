@@ -63,5 +63,44 @@ class MonitoringAgent(agent.Agent):
         receive_behaviour = self.ReceiveReportBehaviour()
         self.add_behaviour(receive_behaviour, report_template)
 
+        # Comportamento para gerir prioridades
+        priority_template = Template()
+        priority_template.set_metadata("performative", "request")
+        priority_behaviour = self.PriorityManagerBehaviour()
+        self.add_behaviour(priority_behaviour, priority_template)
+
+    def set_tls_mapping(self, mapping):
+        """Define o mapeamento de TLS ID para JID."""
+        self.tls_mapping = mapping
+
+    class PriorityManagerBehaviour(behaviour.CyclicBehaviour):
+        """
+        Recebe pedidos de prioridade (e.g., de ambulâncias) e encaminha para o semáforo correto.
+        """
+        async def run(self):
+            msg = await self.receive(timeout=10)
+            if msg:
+                content = msg.body
+                # Esperado: "priority_request:{veh_id}:{tls_id}"
+                if "priority_request" in content and hasattr(self.agent, 'tls_mapping'):
+                    try:
+                         parts = content.split(":")
+                         if len(parts) >= 3:
+                             veh_id = parts[1]
+                             tls_id = parts[2]
+                             
+                             tls_jid = self.agent.tls_mapping.get(tls_id)
+                             if tls_jid:
+                                 # Encaminha o pedido para o agente de semáforo
+                                 forward_msg = Message(to=tls_jid)
+                                 forward_msg.set_metadata("performative", "request")
+                                 forward_msg.body = f"priority_request:{veh_id}"
+                                 await self.send(forward_msg)
+                                 print(f"[Monitor] Encaminhando pedido de {veh_id} para {tls_id} ({tls_jid})")
+                             else:
+                                 print(f"[Monitor] TLS ID {tls_id} não encontrado no mapeamento.")
+                    except Exception as e:
+                        print(f"[Monitor] Erro ao processar pedido de prioridade: {e}")
+
 
 

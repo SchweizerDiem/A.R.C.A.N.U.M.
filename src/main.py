@@ -113,9 +113,13 @@ async def main():
     # Create mapping of tls_id to jid for AmbulanceManager
     tls_mapping = {agent.tls_id: str(agent.jid) for agent in tls_agents}
     
+    # Pass TLS mapping to Monitor Agent
+    monitor_agent.set_tls_mapping(tls_mapping)
+
     # Create Ambulance Manager
     if amb_name and amb_password:
-        ambulance_agent = AmbulanceManagerAgent(str(amb_name), str(amb_password), tls_mapping)
+        # Pass monitor_jid (agent_name) instead of tls_mapping
+        ambulance_agent = AmbulanceManagerAgent(str(amb_name), str(amb_password), str(agent_name))
         print("Ambulance Manager iniciado")
     else:
         ambulance_agent = None

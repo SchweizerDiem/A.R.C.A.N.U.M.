@@ -251,7 +251,7 @@ class CarInfoAgent(agent.Agent):
         self.add_behaviour(car_behaviour)
 
         # Reroute behaviour params
-        self.reroute_check_period = 5  # seconds between reroute evaluations
+        self.reroute_check_period = 2  # seconds between reroute evaluations
         self.reroute_threshold_factor = 1.5  # if remaining_time > ideal_time * factor => reroute
         self.max_allowed_delay = 20.0  # seconds of absolute delay beyond ideal to trigger reroute
 
