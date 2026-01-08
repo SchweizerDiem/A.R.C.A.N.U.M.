@@ -1,0 +1,11 @@
+{
+  "features": [],
+  "labels": [],
+  "stats": {
+    "total_samples_collected": 0,
+    "total_trainings": 0,
+    "is_trained": false,
+    "congestion_threshold": 5.0,
+    "min_samples_to_train": 50
+  }
+}

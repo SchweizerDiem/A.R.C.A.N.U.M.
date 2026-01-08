@@ -3,6 +3,7 @@ import traci
 from spade import agent, behaviour
 from spade.message import Message
 from spade.template import Template
+from utils.CongestionPredictor import CongestionPredictor
 
 
 class MonitoringAgent(agent.Agent):
@@ -20,16 +21,34 @@ class MonitoringAgent(agent.Agent):
                 return
 
             step = traci.simulation.getTime()
-            num_vehicles = traci.vehicle.getIDCount()
-            avg_speed = 0
+            
+            # Coletar features e fazer previsão de congestionamento
+            predictor = self.agent.congestion_predictor
+            sample = predictor.collect_features()
+            
+            if sample:
+                features, label = sample
+                
+                # Fazer previsão
+                congestion_prob = predictor.get_congestion_probability(features)
+                prediction = predictor.predict(features)
+                
+                # Exibir previsão a cada 5 segundos
+                if int(step) % 5 == 0:
+                    status = "🔴 CONGESTIONADO" if prediction == 1 else "🟢 NORMAL"
+                    print(f"[Monitor] Step {int(step)}s | {status} | Probabilidade: {congestion_prob:.1%} | Veículos: {int(features[0])} | Vel.Média: {features[1]:.1f}m/s")
+                
+                # Adicionar amostra para treinamento
+                predictor.add_sample(features, label)
+                
+                # Treinar modelo periodicamente
+                if predictor.should_train() and not predictor.is_trained:
+                    predictor.train()
+                elif predictor.is_trained and len(predictor.training_features) >= predictor.min_samples_to_train:
+                    # Retreinar com novos dados
+                    predictor.train()
 
-            if num_vehicles > 0:
-                speeds = [traci.vehicle.getSpeed(veh_id) for veh_id in traci.vehicle.getIDList()]
-                avg_speed = sum(speeds) / len(speeds)
-
-            #print(f"[Monitor] Step: {step}, Vehicles: {num_vehicles}, Avg Speed: {avg_speed:.2f}")
-
-            # Exibir estados dos agentes
+            # Exibir estados dos agentes (comentado)
             '''if self.agent.agent_states:
                 print("[Monitor] Agent States:")
                 for agent_jid, status in self.agent.agent_states.items():
@@ -52,6 +71,14 @@ class MonitoringAgent(agent.Agent):
         """
         print(f"[{self.jid}] Agente de Monitorização iniciado")
         self.agent_states = {}
+        
+        # Inicializar preditor de congestionamento
+        self.congestion_predictor = CongestionPredictor(
+            congestion_threshold=5.0,  # 5 m/s = ~18 km/h
+            min_samples_to_train=50,
+            data_dir="ml_data"  # Diretório para persistência de dados
+        )
+        print(f"[Monitor] 🧠 CongestionPredictor inicializado (ML ativado)")
 
         # Comportamento para monitorizar a simulação
         monitor_behaviour = self.MonitorBehaviour(period=1)  # executa a cada 1s

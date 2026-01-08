@@ -45,3 +45,5 @@ types-python-dateutil==2.9.0.20250822
 typing_extensions==4.15.0
 uvloop==0.21.0
 yarl==1.21.0
+scikit-learn==1.6.1
+numpy==2.2.3
