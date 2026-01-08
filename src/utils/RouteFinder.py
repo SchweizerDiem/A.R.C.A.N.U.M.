@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
 import heapq
+import traci
 
 class RouteFinder:
     def __init__(self, net_file):
@@ -45,10 +46,40 @@ class RouteFinder:
                 if to_edge not in self.graph[from_edge]:
                     self.graph[from_edge].append(to_edge)
 
-    def find_route(self, start_edge, end_edge):
+    def _is_edge_blocked(self, edge_id):
+        """
+        Check if an edge has all lanes closed to passenger vehicles.
+        Returns True if the edge is blocked, False otherwise.
+        """
+        if not traci.isLoaded():
+            # If TraCI is not loaded, assume edge is not blocked
+            return False
+        
+        try:
+            lane_count = traci.edge.getLaneNumber(edge_id)
+            # Check all lanes - if at least one is open, edge is not blocked
+            for i in range(lane_count):
+                lane_id = f"{edge_id}_{i}"
+                disallowed = traci.lane.getDisallowed(lane_id)
+                if "passenger" not in disallowed:
+                    # At least one lane is open to passengers
+                    return False
+            # All lanes are closed to passengers
+            return True
+        except Exception as e:
+            # If error checking edge, assume it's not blocked
+            print(f"Warning: Could not check if edge {edge_id} is blocked: {e}")
+            return False
+
+    def find_route(self, start_edge, end_edge, check_closures=True):
         """
         Finds the shortest path between start_edge and end_edge using Dijkstra's algorithm.
-        Returns a list of edge IDs representing the route.
+        Only returns routes where all edges have at least one open lane.
+        
+        :param start_edge: Starting edge ID
+        :param end_edge: Destination edge ID
+        :param check_closures: If True, skip edges with all lanes closed (default: True)
+        :return: List of edge IDs representing the route, or empty list if no valid route exists
         """
         if start_edge not in self.edges or end_edge not in self.edges:
             # Try to handle the case if start_edge is internal (starts with :) 
@@ -76,6 +107,10 @@ class RouteFinder:
 
             if u in self.graph:
                 for v in self.graph[u]:
+                    # Skip this edge if it's blocked (all lanes closed)
+                    if check_closures and self._is_edge_blocked(v):
+                        continue
+                    
                     # Weight is the length of the current edge 'u'.
                     # We assume cost is traversing 'u' to get to 'v'.
                     weight = self.edges[u]

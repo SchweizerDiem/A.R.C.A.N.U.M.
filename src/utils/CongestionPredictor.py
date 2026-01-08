@@ -178,10 +178,8 @@ class CongestionPredictor:
             self.is_trained = True
             self.total_trainings += 1
             
-            # Limpar dados de treinamento (manter apenas últimas 100 amostras para retreino)
-            if len(self.training_features) > 100:
-                self.training_features = self.training_features[-100:]
-                self.training_labels = self.training_labels[-100:]
+            # Manter todos os dados coletados (sem limitação)
+            # Nota: Em execuções muito longas, considere adicionar um limite maior se necessário
             
             print(f"[Predictor] ✓ Modelo treinado com {len(X)} amostras (Treinamento #{self.total_trainings})")
             
